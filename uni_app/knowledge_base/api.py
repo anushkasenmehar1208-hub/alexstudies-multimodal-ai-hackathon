@@ -68,27 +68,60 @@ class KnowledgeBaseAPI:
     def __init__(
         self,
         *,
-        engine: Engine,
+        engine: Optional[Engine] = None,
         auth_resolver: AuthResolver,
         provider_config: ai_provider.ProviderConfig = ai_provider.CONFIG,
         completion=ai_provider.complete,
         transcript_fetcher=youtube_utils.fetch_transcript_segments,
         visual_analyzer=None,
     ):
-        self.engine = engine
+        self._engine = engine
         self.auth_resolver = auth_resolver
         self.transcript_fetcher = transcript_fetcher
-        self.ingestor = KnowledgeBaseIngestor(
-            engine,
-            visual_analyzer=visual_analyzer or LocalOCRAnalyzer(),
-        )
-        self.retriever = SourceRetriever(engine)
-        self.assessments = AssessmentService(engine)
-        self.tutor = GroundedTutor(
-            self.retriever,
-            config=provider_config,
-            completion=completion,
-        )
+        self._visual_analyzer = visual_analyzer
+        self._provider_config = provider_config
+        self._completion = completion
+        self._ingestor: Optional[KnowledgeBaseIngestor] = None
+        self._retriever: Optional[SourceRetriever] = None
+        self._assessments: Optional[AssessmentService] = None
+        self._tutor: Optional[GroundedTutor] = None
+
+    @property
+    def engine(self) -> Engine:
+        if self._engine is None:
+            self._engine = _database_engine()
+        return self._engine
+
+    @property
+    def ingestor(self) -> KnowledgeBaseIngestor:
+        if self._ingestor is None:
+            self._ingestor = KnowledgeBaseIngestor(
+                self.engine,
+                visual_analyzer=self._visual_analyzer or LocalOCRAnalyzer(),
+            )
+        return self._ingestor
+
+    @property
+    def retriever(self) -> SourceRetriever:
+        if self._retriever is None:
+            self._retriever = SourceRetriever(self.engine)
+        return self._retriever
+
+    @property
+    def assessments(self) -> AssessmentService:
+        if self._assessments is None:
+            self._assessments = AssessmentService(self.engine)
+        return self._assessments
+
+    @property
+    def tutor(self) -> GroundedTutor:
+        if self._tutor is None:
+            self._tutor = GroundedTutor(
+                self.retriever,
+                config=self._provider_config,
+                completion=self._completion,
+            )
+        return self._tutor
 
     def owner(self, request: Request) -> Optional[int]:
         token = _token(request)
@@ -435,7 +468,7 @@ def register_knowledge_base_routes(
     engine: Optional[Engine] = None,
 ) -> KnowledgeBaseAPI:
     service = KnowledgeBaseAPI(
-        engine=engine or _database_engine(),
+        engine=engine,
         auth_resolver=auth_resolver,
     )
     add_knowledge_base_routes(app, service)
