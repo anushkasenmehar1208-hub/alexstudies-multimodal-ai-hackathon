@@ -86,7 +86,13 @@ new mastery = (previous mastery × previous attempts + current score × 100)
               / total attempts
 ```
 
-Topics below 70% are marked weak and receive a recommendation to review their cited material.
+Topics below 70% are marked weak. After any scored diagnostic answer, the server selects the student's lowest-mastery topic and returns another question grounded in that owner's uploaded source units. Difficulty follows explicit mastery bands:
+
+- below 40%: easy recall or source recognition;
+- 40–69%: medium explanation;
+- 70% or higher: hard explanation with supporting detail.
+
+An incorrect answer returns the correct source-backed explanation and citation. A correct answer updates mastery, after which the interface immediately requests the next cited adaptive step. This cycle uses the existing question, attempt, and mastery tables; it does not require an additional migration.
 
 ## What existed before the hackathon
 
@@ -153,6 +159,7 @@ The required database setting is:
 
 ```dotenv
 DATABASE_URL=postgresql://alexstudies:change-me@127.0.0.1:55432/alexstudies_hackathon
+DATABASE_SSL_MODE=disable
 ```
 
 Tests contain a safety gate and refuse any database that is not `alexstudies_hackathon` on localhost port `55432`.
@@ -167,7 +174,11 @@ alembic upgrade head
 alembic current
 ```
 
-The expected head revision is `20261013_03`.
+The expected order is `20261013_00` (legacy authentication/profile baseline),
+`20261013_01`, `20261013_02`, then head revision `20261013_03`. The baseline
+creates missing legacy tables conditionally, so running `alembic upgrade head`
+again does not recreate tables or remove existing rows. Production startup runs
+the same idempotent upgrade unless `RUN_DATABASE_MIGRATIONS=false` is set.
 
 ### 4. Start the backend and frontend
 
@@ -194,6 +205,8 @@ Open `http://localhost:3000/track-d`, create or use a local-only account, and si
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | Dedicated local PostgreSQL connection |
+| `DATABASE_SSL_MODE` | Yes | `disable` for localhost; `require` for hosted PostgreSQL |
+| `RUN_DATABASE_MIGRATIONS` | Backend | Apply the idempotent migration chain during startup |
 | `SESSION_SECRET` | Yes | Local session and signing secret |
 | `APP_BASE_URL` | Yes | Local Next.js origin |
 | `REFLEX_BACKEND_URL` | Yes | Backend origin used by the Next.js proxy |
@@ -230,6 +243,9 @@ The current report at [`reports/track_d_evaluation.json`](reports/track_d_evalua
 | Question repetition rate | 0.00 | 7 questions |
 | Unsupported-question refusal | Passed | 1 deterministic refusal case |
 | Mastery after one correct and one wrong answer | 50% | 2 simulated attempts |
+| Adaptive lowest-mastery selection | Passed | 1 reproducible adaptive cycle |
+| Adaptive citation validity | Passed | 1 generated follow-up |
+| Adaptive difficulty at 50% mastery | Medium | Explicit 40–69% band |
 
 A separate real-provider verification used `openai/gpt-oss-20b` through Groq. One supported PDF question returned a relevant answer with a valid page-1 source-unit citation, and one unsupported question was refused with no citations. The same flow passed through an authenticated browser session. This is a two-question smoke test, not a broad model-quality benchmark. See [`reports/real_groq_verification.md`](reports/real_groq_verification.md).
 
@@ -254,10 +270,14 @@ npm run build
 - macOS Vision OCR is platform-specific; other systems need a local Tesseract executable.
 - YouTube ingestion requires available captions and may be affected by upstream access restrictions. Supadata is optional and may have its own limits.
 - Assessment generation is deterministic and source-grounded, but question quality varies with extracted text quality.
+- Mastery is a transparent performance score, not evidence of measured educational improvement.
 - PDF citation links identify exact pages but do not yet open a built-in page-highlight viewer.
 - PPTX citations identify exact slides but do not render slide previews inside the application.
 
 ## Submission materials
+
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — three-minute Track D walkthrough.
+- [`docs/DEPLOYMENT_READINESS.md`](docs/DEPLOYMENT_READINESS.md) — isolated deployment topology, variables, bootstrap procedure, costs, and risks.
 
 - [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — a timed 3–5 minute recording script
 - [`docs/DEVPOST_SUBMISSION.md`](docs/DEVPOST_SUBMISSION.md) — prepared Devpost description

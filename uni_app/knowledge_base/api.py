@@ -390,6 +390,36 @@ class KnowledgeBaseAPI:
         except (InvalidSourceError, TypeError, ValueError, json.JSONDecodeError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
 
+    async def adaptive_assessment(self, request: Request) -> JSONResponse:
+        owner_id = self.owner(request)
+        if owner_id is None:
+            return self.unauthorized()
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise InvalidSourceError("JSON object required")
+            asset_ids = data.get("asset_ids")
+            if asset_ids is not None and not isinstance(asset_ids, list):
+                raise InvalidSourceError("asset_ids must be a list")
+            follow_up = await asyncio.to_thread(
+                self.assessments.adaptive_follow_up,
+                owner_id=owner_id,
+                asset_ids=asset_ids,
+            )
+            return JSONResponse({
+                "question": question_payload(follow_up.question),
+                "selected_topic": follow_up.selected_topic,
+                "mastery_score": follow_up.mastery_score,
+                "difficulty": follow_up.difficulty,
+                "weak": follow_up.weak,
+                "rationale": follow_up.rationale,
+            })
+        except (InvalidSourceError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        except Exception:
+            logger.exception("Track D adaptive selection failed")
+            return JSONResponse({"error": "Adaptive practice could not be prepared."}, status_code=500)
+
     async def mastery(self, request: Request) -> JSONResponse:
         owner_id = self.owner(request)
         if owner_id is None:
@@ -422,5 +452,6 @@ def add_knowledge_base_routes(app, service: KnowledgeBaseAPI) -> None:
     app.add_route("/api/track-d/tutor", service.tutor_answer, methods=["POST"])
     app.add_route("/api/track-d/assessments", service.generate_assessment, methods=["POST"])
     app.add_route("/api/track-d/assessments", service.list_assessments, methods=["GET"])
+    app.add_route("/api/track-d/assessments/adaptive", service.adaptive_assessment, methods=["POST"])
     app.add_route("/api/track-d/assessments/{question_id:int}/answer", service.answer_assessment, methods=["POST"])
     app.add_route("/api/track-d/mastery", service.mastery, methods=["GET"])

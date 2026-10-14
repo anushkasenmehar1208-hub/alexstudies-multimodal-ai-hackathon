@@ -1,91 +1,67 @@
-# Alex Studies Track D — 3–5 Minute Demo Script
+# Alex Studies Track D — Three-Minute Demo Script
 
 ## Before recording
 
-- Use only the isolated local PostgreSQL database on `127.0.0.1:55432/alexstudies_hackathon`.
-- Confirm `alembic current` reports `20261013_03`.
-- Use a fresh local demo account and three small, permission-safe sources:
-  - a PDF with a clear fact on a known page;
-  - a PPTX with a fact on a known slide;
-  - a captioned YouTube lecture with a memorable timestamp.
-- Confirm the separate development Groq key is loaded server-side. Keep terminals and environment files out of the recording.
-- Preload the files in Finder but do not pre-ingest them.
+- Use only the isolated PostgreSQL database on `127.0.0.1:55432/alexstudies_hackathon`.
+- Confirm `alembic current` reports `20261013_03` and use a disposable local account.
+- Run `python tools/create_track_d_demo_fixtures.py`. This creates a two-page
+  photosynthesis PDF and two-slide momentum deck under ignored `.local-data`.
+- Prepare the captioned Khan Academy lecture
+  `https://www.youtube.com/watch?v=PSGKRd7Bbl0`. Recheck caption availability
+  from the demo network before recording; do not claim ingestion if YouTube blocks it.
+- Load the separate development Groq key server-side. Keep terminals and environment files out of the recording.
 
-## 0:00–0:25 — Problem and promise
+## 0:00–0:20 — Problem and promise
 
-**Show:** `/track-d` landing state.
+**Show:** `/track-d`.
 
-**Say:**
+> Students learn from lectures, textbooks, and slides, but ordinary chatbots can lose the connection to those sources. Alex Studies creates one private knowledge base and shows the exact page, slide, or video timestamp behind every supported answer and question.
 
-> Students learn from lectures, textbooks, and slides, but ordinary chatbots can lose the connection to those sources. Alex Studies turns all three into one private knowledge base, answers only from retrieved evidence, and shows the exact page, slide, or video timestamp behind the answer.
+## 0:20–0:55 — Three source formats
 
-## 0:25–1:20 — Multimodal ingestion
+1. Upload `.local-data/demo-fixtures/photosynthesis-textbook.pdf` and point out its two page units.
+2. Upload `.local-data/demo-fixtures/momentum-slides.pptx` and point out its two slide units.
+3. Add `https://www.youtube.com/watch?v=PSGKRd7Bbl0` and show that transcript timestamps are retained.
 
-**PDF**
+> The sources use one normalized structure without flattening page, slide, or timestamp boundaries.
 
-1. Upload the prepared PDF.
-2. Point out the processed source card and its page/source-unit count.
-3. Explain that text is stored page by page and figures keep their page relationship.
+## 0:55–1:25 — Grounded tutoring
 
-**PPTX**
+1. Ask **What do chloroplast membranes perform, and what do those reactions produce?**
+2. Expand the citation and show its excerpt and exact page.
+3. Open a YouTube citation to show its timestamp link, or show the exact PPTX slide reference.
 
-1. Upload the prepared deck.
-2. Point out its slide/source-unit and visual counts.
-3. Explain that slide text, tables, speaker notes, and embedded images are extracted without losing the slide number.
+> Groq receives only retrieved source units. The server accepts only citation IDs from that retrieved set and builds the final locator from stored source data.
 
-**YouTube**
+## 1:25–1:40 — Unsupported-question refusal
 
-1. Paste the prepared captioned lecture URL.
-2. Click **Add lecture** and wait for the processed source card.
-3. Explain that transcript segments retain start and end timestamps rather than becoming one untraceable string.
+Ask a clearly unrelated question, such as **Who painted the Mona Lisa?** Show the refusal and absence of citations.
 
-## 1:20–2:15 — Real grounded tutoring and verified citations
+> With no supporting source unit, Alex refuses before calling the model.
 
-1. Ask the prepared PDF-supported question.
-2. Read the concise Groq response.
-3. Expand its citation and show the source excerpt and exact PDF page.
-4. Ask one PPTX- or YouTube-supported question.
-5. Open the YouTube citation to demonstrate the timestamp link, or point to the exact slide reference.
-
-**Say:**
-
-> Groq receives only the retrieved source units. It returns structured citation IDs, and the server rejects any ID that was not retrieved. The final page, slide, and timestamp links are built from the stored source locations, not invented by the model.
-
-## 2:15–2:40 — Unsupported-question refusal
-
-1. Ask a clearly unrelated question, such as **Who painted the Mona Lisa?**
-2. Show: **I can’t answer that from your uploaded sources.**
-3. Point out that there are no citations.
-
-**Say:**
-
-> When retrieval finds no supporting unit, Alex refuses before calling the model. This keeps the tutor bounded to the student's material.
-
-## 2:40–3:40 — Adaptive assessment and mastery
+## 1:40–2:45 — Visible adaptive learning cycle
 
 1. Click **Run diagnostic**.
-2. Show the MCQ, short-answer, and numerical formats.
-3. Expand one question's citation.
-4. Submit one correct answer and show cited feedback plus 100% mastery.
-5. Submit an incorrect answer for the same topic and show mastery update to 50% and the weak-topic recommendation.
+2. Expand a question citation, deliberately answer it incorrectly, and show the source-backed explanation.
+3. Point to the mastery score below 70% and the automatically selected **Next adaptive step**.
+4. Show that the panel names the weakest topic, current mastery, and selected difficulty.
+5. Answer the cited follow-up correctly.
+6. Show the updated mastery score and the next cited question. Explain the bands: below 40% is easy, 40–69% is medium, and 70% or higher is hard.
 
-**Say:**
+> The next step is selected from the student's lowest mastery topic. Each answer updates a transparent running score, changes the difficulty band, and produces another question grounded in that student's uploaded material.
 
-> Every question is tied to a source unit. Duplicate fingerprints prevent repeated questions. Mastery is a transparent running average of scored attempts, and topics below 70% receive a source-backed review recommendation.
+## 2:45–3:00 — Evidence and scope
 
-## 3:40–4:10 — Privacy, evaluation, and close
+Show the evaluation summary in the README.
 
-**Show:** the evaluation table in the README.
+> Retrieval, citation validity, refusal, ownership isolation, and the adaptive cycle are covered by reproducible tests. The real Groq result is a bounded smoke test. Alex Studies existed before this hackathon; the Track D source pipeline, grounded tutor, and adaptive interface were built separately and the repository discloses AI-assistant use.
 
-**Say:**
-
-> All retrieval and progress queries are owner-scoped. On nine deterministic retrieval cases across PDF, PPTX, and YouTube, the current fixture achieved a 100% hit rate, mean reciprocal rank, context precision at three, context recall at three, and citation validity. A separate real Groq browser smoke test passed one supported question with a verified page citation and refused one unsupported question. Alex Studies existed before the hackathon; this unified source pipeline, grounded tutor, and adaptive Track D interface were developed separately for this submission with AI coding assistants disclosed in the repository.
-
-End on the `/track-d` screen with the three source cards, a cited answer, and mastery visible.
+End on the Track D screen with source cards, a citation, mastery, and the adaptive follow-up visible.
 
 ## Recording guardrails
 
-- Do not show `.env`, browser storage, tokens, database URLs containing passwords, or provider dashboards.
-- Do not claim semantic diagram understanding; the current visual path extracts images and performs local OCR only.
-- Describe the two-question real Groq check as a smoke test, not a broad quality benchmark.
-- If YouTube captions are temporarily unavailable, explain the upstream caption dependency and continue with the already verified PDF/PPTX flow rather than fabricating success.
+- Never show `.env`, browser storage, tokens, database credentials, or provider dashboards.
+- Do not claim measured learning improvement; show deterministic product behavior only.
+- Do not claim semantic diagram understanding; the visual path extracts images and performs local OCR.
+- Describe the real Groq run as a smoke test, not a broad quality benchmark.
+- If captions are unavailable, state the upstream limitation and continue with PDF/PPTX rather than fabricating success.

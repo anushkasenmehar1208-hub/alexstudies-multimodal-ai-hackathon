@@ -90,6 +90,7 @@ def main():
         assessments.answer(owner_id=OWNER, question_id=first.id, answer=first.correct_answer)
         assessments.answer(owner_id=OWNER, question_id=first.id, answer="deliberately incorrect")
         mastery = next(row for row in assessments.mastery(owner_id=OWNER) if row["topic_tag"] == first.topic_tag)
+        adaptive = assessments.adaptive_follow_up(owner_id=OWNER)
 
         report = {
             "source_fixture_count": 3,
@@ -104,6 +105,9 @@ def main():
             "question_repetition_rate": round(1 - unique_prompts / len(generated.questions), 4),
             "duplicate_generation_created_count": repeated.created_count,
             "simulated_mastery_after_correct_then_wrong": mastery["mastery_score"],
+            "adaptive_selected_lowest_mastery": adaptive.selected_topic == mastery["topic_tag"],
+            "adaptive_difficulty": adaptive.difficulty,
+            "adaptive_citation_valid": adaptive.question.source_unit_id == adaptive.question.citation.get("source_unit_id"),
             "question_types": sorted({item.question_type for item in generated.questions}),
             "faithfulness": "not_run_no_development_provider_key",
             "answer_relevance": "not_run_no_development_provider_key"

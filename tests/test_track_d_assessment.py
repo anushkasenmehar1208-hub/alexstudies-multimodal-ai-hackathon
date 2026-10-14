@@ -136,6 +136,141 @@ class TrackDAssessmentTests(unittest.TestCase):
         self.assertIn("Review", mastery[0]["recommendation"])
         self.assertGreater(correct.json()["citation"]["source_unit_id"], 0)
 
+    def test_diagnostic_drives_cited_adaptive_cycle_and_difficulty(self):
+        generated = self.service.assessments.generate(owner_id=OWNER, limit=9, diagnostic=True)
+        diagnostic = next(item for item in generated.questions if item.question_type == "mcq")
+        wrong = self.client.post(
+            f"/api/track-d/assessments/{diagnostic.id}/answer",
+            headers=self.headers,
+            json={"answer": "not the source statement"},
+        )
+        self.assertEqual(wrong.status_code, 200, wrong.text)
+        self.assertFalse(wrong.json()["is_correct"])
+        self.assertIn("Source-backed explanation", wrong.json()["feedback"])
+
+        easy = self.client.post(
+            "/api/track-d/assessments/adaptive", headers=self.headers, json={}
+        )
+        self.assertEqual(easy.status_code, 200, easy.text)
+        easy_body = easy.json()
+        self.assertTrue(easy_body["weak"])
+        self.assertEqual(easy_body["mastery_score"], 0.0)
+        self.assertEqual(easy_body["difficulty"], "easy")
+        self.assertTrue(easy_body["question"]["adaptive"])
+        self.assertEqual(easy_body["question"]["topic_tag"], diagnostic.topic_tag)
+        self.assertGreater(easy_body["question"]["citation"]["source_unit_id"], 0)
+
+        easy_question = next(
+            item for item in self.service.assessments.list_questions(owner_id=OWNER)
+            if item.id == easy_body["question"]["id"]
+        )
+        first_correct = self.client.post(
+            f"/api/track-d/assessments/{easy_question.id}/answer",
+            headers=self.headers,
+            json={"answer": easy_question.correct_answer},
+        )
+        self.assertEqual(first_correct.status_code, 200, first_correct.text)
+        self.assertEqual(first_correct.json()["mastery_score"], 50.0)
+
+        medium = self.client.post(
+            "/api/track-d/assessments/adaptive", headers=self.headers, json={}
+        )
+        self.assertEqual(medium.status_code, 200, medium.text)
+        self.assertEqual(medium.json()["difficulty"], "medium")
+        medium_question = next(
+            item for item in self.service.assessments.list_questions(owner_id=OWNER)
+            if item.id == medium.json()["question"]["id"]
+        )
+        for expected_mastery in (66.67, 75.0):
+            response = self.client.post(
+                f"/api/track-d/assessments/{medium_question.id}/answer",
+                headers=self.headers,
+                json={"answer": medium_question.correct_answer},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertAlmostEqual(response.json()["mastery_score"], expected_mastery, places=2)
+
+        hard = self.client.post(
+            "/api/track-d/assessments/adaptive", headers=self.headers, json={}
+        )
+        self.assertEqual(hard.status_code, 200, hard.text)
+        self.assertFalse(hard.json()["weak"])
+        self.assertEqual(hard.json()["difficulty"], "hard")
+        self.assertIn("at or above 70%", hard.json()["rationale"])
+
+    def test_adaptive_follow_up_requires_owner_mastery_and_never_leaks(self):
+        generated = self.service.assessments.generate(owner_id=OWNER, limit=1, diagnostic=True)
+        question = generated.questions[0]
+        self.client.post(
+            f"/api/track-d/assessments/{question.id}/answer",
+            headers=self.headers,
+            json={"answer": "wrong"},
+        )
+        own = self.client.post(
+            "/api/track-d/assessments/adaptive", headers=self.headers, json={}
+        )
+        self.assertEqual(own.status_code, 200, own.text)
+        other = self.client.post(
+            "/api/track-d/assessments/adaptive",
+            headers={"X-Auth-Token": "other"},
+            json={},
+        )
+        self.assertEqual(other.status_code, 422)
+        self.assertNotIn(own.json()["selected_topic"], other.text)
+        self.assertEqual(
+            self.client.post("/api/track-d/assessments/adaptive", json={}).status_code,
+            401,
+        )
+
+    def test_adaptive_follow_up_selects_lowest_mastery_across_topics(self):
+        biology = build_pdf([(
+            600,
+            700,
+            (
+                "Mitosis produces two genetically similar daughter cells.\n"
+                "Chromosomes align at the cell equator during metaphase.\n"
+                "Spindle fibres separate sister chromatids during anaphase.\n"
+                "Cytokinesis divides the cytoplasm after nuclear division."
+            ),
+            None,
+        )])
+        uploaded = self.client.post(
+            "/api/track-d/sources/pdf",
+            headers=self.headers,
+            files={"file": ("mitosis.pdf", biology, "application/pdf")},
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.text)
+
+        generated = self.service.assessments.generate(owner_id=OWNER, limit=15, diagnostic=True)
+        mcqs = {}
+        for item in generated.questions:
+            if item.question_type == "mcq":
+                mcqs.setdefault(item.topic_tag, item)
+        self.assertGreaterEqual(len(mcqs), 2)
+        weak_topic, strong_topic = list(mcqs)[:2]
+
+        weak = mcqs[weak_topic]
+        strong = mcqs[strong_topic]
+        self.client.post(
+            f"/api/track-d/assessments/{weak.id}/answer",
+            headers=self.headers,
+            json={"answer": "not the source statement"},
+        )
+        self.client.post(
+            f"/api/track-d/assessments/{strong.id}/answer",
+            headers=self.headers,
+            json={"answer": strong.correct_answer},
+        )
+
+        follow_up = self.client.post(
+            "/api/track-d/assessments/adaptive", headers=self.headers, json={}
+        )
+        self.assertEqual(follow_up.status_code, 200, follow_up.text)
+        self.assertEqual(follow_up.json()["selected_topic"], weak_topic)
+        self.assertEqual(follow_up.json()["mastery_score"], 0.0)
+        self.assertEqual(follow_up.json()["question"]["topic_tag"], weak_topic)
+        self.assertNotEqual(follow_up.json()["selected_topic"], strong_topic)
+
     def test_questions_and_answers_are_owner_isolated(self):
         question = self.service.assessments.generate(owner_id=OWNER, limit=1).questions[0]
         self.assertEqual(

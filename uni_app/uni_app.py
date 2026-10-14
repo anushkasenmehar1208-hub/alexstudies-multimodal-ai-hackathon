@@ -3699,7 +3699,11 @@ def _google_callback_url(request: Request) -> str:
     request_origin = _request_origin(request)
     if configured and not _should_use_request_origin(request_origin, configured):
         return configured
-    base = request_origin or _normalized_origin(configured) or "http://localhost:3000"
+    base = (
+        request_origin
+        if configured and _should_use_request_origin(request_origin, configured)
+        else _frontend_base_url(request)
+    )
     return f"{base.rstrip('/')}/auth/google/callback"
 
 

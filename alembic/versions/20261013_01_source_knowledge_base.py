@@ -1,7 +1,7 @@
 """Create the Track D Phase 1 source knowledge-base tables.
 
 Revision ID: 20261013_01
-Revises:
+Revises: 20261013_00
 Create Date: 2026-10-13
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "20261013_01"
-down_revision: str | None = None
+down_revision: str | None = "20261013_00"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

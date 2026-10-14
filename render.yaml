@@ -1,0 +1,39 @@
+# Configuration template only. Blueprint sync/deployment remains a manual action.
+services:
+  - type: web
+    name: alexstudies-track-d-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_MODE
+        value: require
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: APP_BASE_URL
+        sync: false
+      - key: REFLEX_API_URL
+        sync: false
+      - key: PRODUCTION
+        value: "true"
+      - key: ENFORCE_HTTPS
+        value: "true"
+      - key: RUN_DATABASE_MIGRATIONS
+        value: "true"
+      - key: ALEX_DEMO_FREE_MODE
+        value: "true"
+      - key: ALEX_TEXT_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_TEXT_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_STT_MODEL
+        value: whisper-large-v3-turbo

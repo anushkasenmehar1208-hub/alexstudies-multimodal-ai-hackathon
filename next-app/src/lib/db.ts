@@ -12,11 +12,18 @@ function getClient(): ReturnType<typeof postgres> {
       "DATABASE_URL env var is required. Get the Neon Postgres connection string from Railway -> next-app service -> Variables."
     );
   }
+  const configuredSsl = (process.env.DATABASE_SSL_MODE ?? "").trim().toLowerCase();
+  const hostname = (() => {
+    try { return new URL(DATABASE_URL).hostname.toLowerCase(); }
+    catch { return ""; }
+  })();
+  const localDatabase = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const ssl = configuredSsl === "disable" ? false : configuredSsl === "require" ? "require" : localDatabase ? false : "require";
   const client = postgres(DATABASE_URL, {
     max: 5,
     idle_timeout: 30,
     connect_timeout: 10,
-    ssl: "require",
+    ssl,
   });
   globalThis.__sqlClient = client;
   return client;

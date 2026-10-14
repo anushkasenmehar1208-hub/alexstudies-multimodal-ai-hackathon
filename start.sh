@@ -3,6 +3,11 @@ set -e
 
 APP_PORT="${PORT:-8080}"
 
+if [ "${RUN_DATABASE_MIGRATIONS:-true}" = "true" ]; then
+    echo "Applying idempotent database migrations"
+    python3 -m alembic upgrade head
+fi
+
 echo "Starting production server on 0.0.0.0:$APP_PORT"
 echo "APP_BASE_URL=${APP_BASE_URL:-not set}"
 echo "DATABASE_URL=${DATABASE_URL:+set}"

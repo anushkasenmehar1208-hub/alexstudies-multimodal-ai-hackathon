@@ -73,6 +73,27 @@ test('Track D UI exposes all demo workflows without provider secrets', () => {
   ]) assert.ok(source.includes(required), required);
   assert.doesNotMatch(source, /GROQ_API_KEY|OPENAI_API_KEY|OPENROUTER_API_KEY/);
 });
+
+test('Track D UI visibly completes the adaptive mastery loop', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/track-d/TrackDDemo.tsx'), 'utf8');
+  assert.match(source, /\/api\/track-d\/assessments\/adaptive/);
+  assert.match(source, /await refresh\(token\);\s*await loadAdaptive\(\);/);
+  assert.match(source, /Next adaptive step/);
+  assert.match(source, /weakest measured topic controls the next cited question/i);
+  assert.match(source, /adaptive\.mastery_score\.toFixed\(0\)/);
+  assert.match(source, /questionCard\(adaptive\.question, true\)/);
+  assert.match(source, /Previous answer:/);
+  assert.match(source, /setLastAdaptiveFeedback\(result\.feedback\)/);
+});
+
+test('database client disables TLS only for explicit or inferred localhost development', () => {
+  const source = fs.readFileSync(path.join(root, 'src/lib/db.ts'), 'utf8');
+  assert.match(source, /DATABASE_SSL_MODE/);
+  assert.match(source, /hostname === "localhost"/);
+  assert.match(source, /hostname === "127\.0\.0\.1"/);
+  assert.match(source, /configuredSsl === "disable" \? false/);
+  assert.match(source, /localDatabase \? false : "require"/);
+});
 test('proxy preserves API paths and adds a slash only for SPA pages', async () => {
   const urls = [];
   const { proxy } = load('proxy.ts', { globals: { fetch: async url => { urls.push(url); return new Response('OK'); } } });

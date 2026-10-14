@@ -10,7 +10,7 @@ import random
 import re
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .ingestion import InvalidSourceError, _require_owner
@@ -54,6 +54,16 @@ class AssessmentResult:
     topic_tag: str
     mastery_score: float
     attempt_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveFollowUp:
+    question: AssessmentQuestion
+    selected_topic: str
+    mastery_score: float
+    difficulty: str
+    weak: bool
+    rationale: str
 
 
 def _sentences(text: str) -> list[str]:
@@ -128,7 +138,17 @@ def question_payload(question: AssessmentQuestion) -> dict[str, Any]:
         "difficulty": question.difficulty,
         "citation": dict(question.citation or {}),
         "diagnostic": bool(question.diagnostic),
+        "adaptive": bool((question.answer_metadata or {}).get("adaptive")),
     }
+
+
+def difficulty_for_mastery(mastery_score: float) -> str:
+    """Map the current mastery score to an explicit, testable difficulty tier."""
+    if mastery_score < 40.0:
+        return "easy"
+    if mastery_score < 70.0:
+        return "medium"
+    return "hard"
 
 
 class AssessmentService:
@@ -359,9 +379,12 @@ class AssessmentService:
             is_correct = score >= threshold
             label = str(question.citation.get("label") or "the cited source")
             if is_correct:
-                feedback = f"Correct. Evidence: {label}."
+                feedback = f"Correct. The cited source supports your answer: {label}."
             else:
-                feedback = f"Review {label}. Expected source statement: {question.correct_answer}"
+                feedback = (
+                    f"Not yet. Source-backed explanation: {question.correct_answer} "
+                    f"Evidence: {label}."
+                )
 
             session.add(
                 AssessmentAttempt(
@@ -407,6 +430,175 @@ class AssessmentService:
                 topic_tag=question.topic_tag,
                 mastery_score=mastery.mastery_score,
                 attempt_count=mastery.attempt_count,
+            )
+
+    def adaptive_follow_up(
+        self,
+        *,
+        owner_id: int,
+        asset_ids: Optional[Sequence[int]] = None,
+    ) -> AdaptiveFollowUp:
+        """Create or reuse a cited follow-up for the owner's weakest topic.
+
+        The algorithm is deliberately transparent: lowest mastery wins, and
+        mastery bands select easy, medium, or hard. The follow-up is derived
+        from the same owner-scoped source unit as an existing cited question.
+        """
+        owner_id = _require_owner(owner_id)
+        with self._sessions.begin() as session:
+            mastery = session.scalar(
+                select(TopicMastery)
+                .where(TopicMastery.owner_id == owner_id)
+                .order_by(TopicMastery.mastery_score, TopicMastery.attempt_count, TopicMastery.topic_tag)
+                .limit(1)
+            )
+            if mastery is None:
+                raise InvalidSourceError(
+                    "Complete at least one diagnostic question before requesting adaptive practice."
+                )
+
+            difficulty = difficulty_for_mastery(mastery.mastery_score)
+            statement = (
+                select(AssessmentQuestion, SourceUnit, SourceAsset)
+                .join(
+                    SourceUnit,
+                    (SourceUnit.id == AssessmentQuestion.source_unit_id)
+                    & (SourceUnit.owner_id == AssessmentQuestion.owner_id),
+                )
+                .join(
+                    SourceAsset,
+                    (SourceAsset.id == AssessmentQuestion.asset_id)
+                    & (SourceAsset.owner_id == AssessmentQuestion.owner_id),
+                )
+                .where(
+                    AssessmentQuestion.owner_id == owner_id,
+                    AssessmentQuestion.topic_tag == mastery.topic_tag,
+                    SourceUnit.owner_id == owner_id,
+                    SourceAsset.owner_id == owner_id,
+                )
+                .order_by(AssessmentQuestion.id)
+            )
+            if asset_ids is not None:
+                try:
+                    clean_ids = sorted({int(value) for value in asset_ids if int(value) > 0})
+                except (TypeError, ValueError) as exc:
+                    raise InvalidSourceError("asset_ids must contain positive integers") from exc
+                if not clean_ids:
+                    raise InvalidSourceError("No selected source can support adaptive practice.")
+                statement = statement.where(AssessmentQuestion.asset_id.in_(clean_ids))
+
+            rows = session.execute(statement).all()
+            if not rows:
+                raise InvalidSourceError(
+                    "The weakest topic has no owner-accessible source question."
+                )
+
+            # Prefer the least-practised source unit so repeated cycles rotate
+            # through available evidence rather than always returning one row.
+            attempt_counts = dict(
+                session.execute(
+                    select(AssessmentAttempt.question_id, func.count(AssessmentAttempt.id))
+                    .where(AssessmentAttempt.owner_id == owner_id)
+                    .group_by(AssessmentAttempt.question_id)
+                ).all()
+            )
+            base_question, unit, asset = min(
+                rows,
+                key=lambda row: (attempt_counts.get(row[0].id, 0), row[0].id),
+            )
+            sentences = _sentences(unit.extracted_text)
+            target = sentences[0] if sentences else base_question.correct_answer
+            keywords = _keywords(target)
+            citation = citation_payload(_citation(unit, asset, target))
+
+            if difficulty == "easy":
+                distractors = list(dict.fromkeys(
+                    sentence
+                    for source_unit, _source_asset in self._source_rows(
+                        session, owner_id=owner_id, asset_ids=asset_ids
+                    )
+                    for sentence in _sentences(source_unit.extracted_text)
+                    if sentence != target
+                ))
+                if len(distractors) >= 3:
+                    question_type = "mcq"
+                    prompt = f"Adaptive review for {mastery.topic_tag}: which statement is supported by the cited source?"
+                    options = [target, *distractors[:3]]
+                    seed = int(sha256(f"adaptive:{unit.id}:{target}".encode()).hexdigest()[:12], 16)
+                    random.Random(seed).shuffle(options)
+                    metadata: dict[str, Any] = {}
+                else:
+                    question_type = "short_answer"
+                    prompt = f"Adaptive review for {mastery.topic_tag}: state the cited source's key claim."
+                    options = []
+                    metadata = {"keywords": keywords, "threshold": 0.5}
+            elif difficulty == "medium":
+                question_type = "short_answer"
+                prompt = (
+                    f"Adaptive follow-up for {mastery.topic_tag}: explain the cited source's "
+                    "key claim in your own words."
+                )
+                options = []
+                metadata = {"keywords": keywords, "threshold": 0.6}
+            else:
+                question_type = "short_answer"
+                prompt = (
+                    f"Adaptive challenge for {mastery.topic_tag}: explain the cited claim and "
+                    "include its most important supporting details."
+                )
+                options = []
+                metadata = {"keywords": keywords, "threshold": 0.8}
+
+            metadata.update(
+                {
+                    "adaptive": True,
+                    "mastery_before": mastery.mastery_score,
+                    "selection_rule": "lowest_topic_mastery",
+                }
+            )
+            fingerprint = _question_fingerprint(unit.id, question_type, prompt, target)
+            follow_up = session.scalar(
+                select(AssessmentQuestion).where(
+                    AssessmentQuestion.owner_id == owner_id,
+                    AssessmentQuestion.fingerprint == fingerprint,
+                )
+            )
+            if follow_up is None:
+                follow_up = AssessmentQuestion(
+                    owner_id=owner_id,
+                    source_unit_id=unit.id,
+                    asset_id=asset.id,
+                    question_type=question_type,
+                    prompt=prompt,
+                    options=options,
+                    correct_answer=target,
+                    answer_metadata=metadata,
+                    topic_tag=mastery.topic_tag,
+                    difficulty=difficulty,
+                    citation=citation,
+                    fingerprint=fingerprint,
+                    diagnostic=False,
+                )
+                session.add(follow_up)
+                session.flush()
+
+            weak = mastery.mastery_score < 70.0
+            rationale = (
+                f"{mastery.topic_tag} is the weakest topic at {mastery.mastery_score:.0f}%. "
+                f"The next cited question is {difficulty}."
+                if weak
+                else (
+                    f"All measured topics are at or above 70%. The lowest is "
+                    f"{mastery.topic_tag} at {mastery.mastery_score:.0f}%, so practice advances to hard."
+                )
+            )
+            return AdaptiveFollowUp(
+                question=follow_up,
+                selected_topic=mastery.topic_tag,
+                mastery_score=mastery.mastery_score,
+                difficulty=difficulty,
+                weak=weak,
+                rationale=rationale,
             )
 
     def mastery(self, *, owner_id: int) -> list[dict[str, Any]]:

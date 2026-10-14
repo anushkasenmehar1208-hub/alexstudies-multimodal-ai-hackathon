@@ -11,6 +11,9 @@
   "question_repetition_rate": 0.0,
   "duplicate_generation_created_count": 0,
   "simulated_mastery_after_correct_then_wrong": 50.0,
+  "adaptive_selected_lowest_mastery": true,
+  "adaptive_difficulty": "medium",
+  "adaptive_citation_valid": true,
   "question_types": [
     "mcq",
     "numerical",

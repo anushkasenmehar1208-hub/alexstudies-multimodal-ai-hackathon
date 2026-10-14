@@ -1,6 +1,7 @@
 python-dotenv
 reflex==0.8.28.post1
 reflex-local-auth
+alembic>=1.13,<2
 psycopg2-binary
 psycopg[binary]>=3.2
 sqlmodel
