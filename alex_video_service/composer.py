@@ -1,0 +1,172 @@
+"""Recipe → full Manim scene file.
+
+The LLM emits a recipe (JSON) like:
+    {
+      "scenes": [
+        {
+          "template": "intro_hero",
+          "heading": "DNA: The Code of Life",
+          "subtext": "Every cell carries this molecular library",
+          "params": {"title": "DNA", "color": "BLUE_D"}
+        },
+        ...
+      ]
+    }
+
+Each scene gets a slide-style wrapper: a big heading at the top + a caption at
+the bottom that stay on screen while the 3D template plays.  The wrapper also
+adds a 3-second hold so the visual lingers — viewers absorb what they're seeing
+before it fades to the next scene.
+"""
+
+from __future__ import annotations
+
+import textwrap
+
+from templates import TEMPLATES, _safe, validate_custom_scene
+
+
+class RecipeError(ValueError):
+    pass
+
+
+_HEADER = textwrap.dedent('''
+    from manim import *
+    import numpy as np
+
+
+    class MainScene(ThreeDScene):
+        def construct(self):
+            # Default to FLAT 2D camera. 2D works better for most diagrams
+            # (graphs, equations, flowcharts, cells, molecules-from-the-side).
+            # Scenes that genuinely need 3D set their own camera explicitly.
+            self.set_camera_orientation(phi=0, theta=-PI/2, distance=10)
+            # NO ambient rotation — it makes 2D diagrams unreadable.
+''').strip()
+
+
+def _wrap_slide(i: int, heading: str, subtext: str, template_body: str) -> str:
+    """Wrap a scene's body with heading + subtext, with continuous flow.
+
+    Key behaviour:
+      - Heading + subtext fade in BEFORE the visual builds
+      - They stay on screen during the whole visual
+      - At the end, there's NO empty gap — we use a catch-all FadeOut on
+        everything still on screen, so the visual stays visible until the
+        scene transitions out (no dead time with just text)
+      - During the brief 0.8s tail, the heading does a subtle scale-pulse
+        so the screen never feels frozen
+    """
+    heading = _safe(heading, "")
+    subtext = _safe(subtext, "")
+
+    # Unique mobject names per scene so they don't clash across scenes
+    h, s = f"slide_h_{i}", f"slide_s_{i}"
+
+    pre = textwrap.dedent(f'''
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # SCENE {i}: {heading[:50]}
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        {h} = Text("{heading}", font_size=42, weight=BOLD, color=WHITE)
+        {h}.to_edge(UP, buff=0.22)
+        {s} = Text("{subtext}", font_size=22, color=GREY_B)
+        {s}.to_edge(DOWN, buff=0.28)
+        self.add_fixed_in_frame_mobjects({h}, {s})
+        {h}.set_opacity(0); {s}.set_opacity(0)
+        self.play({h}.animate.set_opacity(1), {s}.animate.set_opacity(1), run_time=0.6)
+    ''').strip()
+
+    # Tail: keep motion alive even when the body ends early.
+    # 1) Pulse the visual (any non-text mobjects on screen) so the screen
+    #    doesn't freeze. This buys ~2s of extra motion even if the body
+    #    only ran for 5s.
+    # 2) Brief hold so the audience absorbs the final state.
+    # 3) Catch-all FadeOut on EVERYTHING currently on screen so we don't
+    #    leave dead time with just text.
+    post = textwrap.dedent(f'''
+        # Keep things moving — pulse the visual so it's never static
+        _live_{i} = [_m for _m in list(self.mobjects) if _m not in [{h}, {s}]]
+        if _live_{i}:
+            _pulse_{i} = _live_{i}[:4]
+            self.play(*[_m.animate.scale(1.06) for _m in _pulse_{i}],
+                      run_time=0.7, rate_func=there_and_back)
+        self.play({h}.animate.scale(1.04), run_time=0.5, rate_func=there_and_back)
+        self.wait(0.3)
+        _remaining_{i} = [_m for _m in list(self.mobjects)]
+        if _remaining_{i}:
+            self.play(*[FadeOut(_m) for _m in _remaining_{i}], run_time=0.4)
+    ''').strip()
+
+    return pre + "\n" + template_body + "\n" + post
+
+
+def compose_scene(recipe: dict) -> str:
+    """Build a full Manim scene file from a recipe dict.
+
+    Raises RecipeError if the recipe is malformed or references unknown templates.
+    """
+    if not isinstance(recipe, dict):
+        raise RecipeError("Recipe must be a JSON object")
+
+    scenes = recipe.get("scenes")
+    if not isinstance(scenes, list) or not scenes:
+        raise RecipeError("Recipe must contain a non-empty 'scenes' list")
+    if len(scenes) < 4:
+        raise RecipeError(
+            f"Recipe has only {len(scenes)} scene(s) — minimum is 4. "
+            "The LLM must output at least 4 scenes for a quality video."
+        )
+
+    body_blocks = []
+    for i, scene in enumerate(scenes):
+        if not isinstance(scene, dict):
+            raise RecipeError(f"Scene #{i} must be an object")
+
+        tname = scene.get("template")
+        if not tname:
+            raise RecipeError(f"Scene #{i} missing 'template' field")
+
+        # ── Custom LLM-generated scene ────────────────────────────────────
+        if tname == "custom":
+            import textwrap as _tw
+            raw_code = scene.get("code", "") or ""
+            raw_code = _tw.dedent(raw_code).strip()   # normalise to 0-indent (composer adds 8 later)
+            if not raw_code:
+                raise RecipeError(f"Scene #{i} has template='custom' but no 'code' field")
+            error = validate_custom_scene(raw_code)
+            if error:
+                raise RecipeError(f"Scene #{i} custom code rejected: {error}")
+            block = raw_code  # composer's textwrap.indent adds the 8-space indent
+        # ── Standard template ─────────────────────────────────────────────
+        else:
+            if tname not in TEMPLATES:
+                raise RecipeError(
+                    f"Unknown template '{tname}'. Available: {sorted(TEMPLATES.keys())}"
+                )
+
+            params = scene.get("params", {}) or {}
+            if not isinstance(params, dict):
+                raise RecipeError(f"Scene #{i} 'params' must be an object")
+
+            # Filter to only the params this template accepts (LLM might add extras)
+            accepted = set(TEMPLATES[tname]["params"].keys())
+            clean_params = {k: v for k, v in params.items() if k in accepted}
+
+            try:
+                block = TEMPLATES[tname]["fn"](**clean_params)
+            except Exception as e:
+                raise RecipeError(
+                    f"Template '{tname}' failed with params {clean_params}: {e}"
+                ) from e
+
+        # Wrap the template with heading + subtext + hold
+        heading = scene.get("heading", "") or ""
+        subtext = scene.get("subtext", "") or ""
+        wrapped = _wrap_slide(i, heading, subtext, block)
+
+        body_blocks.append(textwrap.indent(wrapped, "        "))
+
+    # Final wait — renderer auto-extends this to match audio length
+    body_blocks.append("        self.wait(4)")
+
+    return _HEADER + "\n" + "\n\n".join(body_blocks) + "\n"

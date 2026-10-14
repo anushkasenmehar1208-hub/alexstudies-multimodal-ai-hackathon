@@ -1,0 +1,14 @@
+{
+  "retrieval_cases": [
+    {"query": "chloroplast photophosphorylation", "expected_source_type": "pdf"},
+    {"query": "photosystems light energy", "expected_source_type": "pdf"},
+    {"query": "ATP chemical energy", "expected_source_type": "pdf"},
+    {"query": "impulse momentum collision", "expected_source_type": "pptx"},
+    {"query": "force time impulse", "expected_source_type": "pptx"},
+    {"query": "momentum isolated collision", "expected_source_type": "pptx"},
+    {"query": "ribosome translation codon", "expected_source_type": "youtube"},
+    {"query": "transfer RNA amino acids", "expected_source_type": "youtube"},
+    {"query": "proteins linked amino acids", "expected_source_type": "youtube"}
+  ],
+  "unsupported_question": "What year did the first human land on Mars?"
+}

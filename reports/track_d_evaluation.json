@@ -1,0 +1,21 @@
+{
+  "source_fixture_count": 3,
+  "fixture_cases": 9,
+  "retrieval_hit_rate": 1.0,
+  "mean_reciprocal_rank": 1.0,
+  "context_precision_at_3": 1.0,
+  "context_recall_at_3": 1.0,
+  "citation_validity": 1.0,
+  "assessment_question_count": 7,
+  "unsupported_refusal": true,
+  "question_repetition_rate": 0.0,
+  "duplicate_generation_created_count": 0,
+  "simulated_mastery_after_correct_then_wrong": 50.0,
+  "question_types": [
+    "mcq",
+    "numerical",
+    "short_answer"
+  ],
+  "faithfulness": "not_run_no_development_provider_key",
+  "answer_relevance": "not_run_no_development_provider_key"
+}
