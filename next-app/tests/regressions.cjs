@@ -103,6 +103,28 @@ test('Reflex auth storage has a single owner for deterministic Safari hydration'
   assert.doesNotMatch(source, /app_auth_token: str = rx\.LocalStorage\(name=AUTH_TOKEN_LOCAL_STORAGE_KEY\)/);
 });
 
+test('Reflex workspace can recover an authenticated Safari cookie before rendering Visitor', () => {
+  const source = fs.readFileSync(path.join(root, '..', 'uni_app', 'uni_app.py'), 'utf8');
+  assert.match(source, /fetch\('\/api\/auth\/reflex-session'/);
+  assert.match(source, /callback=AppState\.restore_workspace_auth/);
+  assert.match(source, /yield AppState\.on_load_scope_page\(scope\)/);
+});
+
+test('Reflex session bootstrap validates the cookie and disables caching', async () => {
+  const { GET } = load('app/api/auth/reflex-session/route.ts', {
+    mocks: {
+      '@/lib/auth': {
+        AUTH_TOKEN_LOCAL_STORAGE_KEY: '_auth_token',
+        getSessionUser: async token => token === 'valid-session' ? { id: 7, username: 'student' } : null,
+      },
+    },
+  });
+  const response = await GET({ cookies: { get: () => ({ value: 'valid-session' }) } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { authenticated: true, token: 'valid-session' });
+});
+
 test('auth session endpoint accepts the same-site cookie without returning its token', async () => {
   const { GET } = load('app/api/auth/session/route.ts', {
     mocks: {

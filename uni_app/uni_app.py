@@ -6030,6 +6030,7 @@ class AppState(reflex_local_auth.LocalAuthState):
     _hydrate_nonce: int = 0
     _last_hydrated_scope: str = ""
     _last_hydrated_session_id: str = ""
+    _workspace_auth_restore_attempted: bool = False
     current_day: int = 1
     current_topic_index: int = 0
     current_topic_name: str = ""
@@ -13201,6 +13202,33 @@ Quality rules:
         # branch below redirects authed users to /select — exactly the
         # bug post-onboarding navigation kept hitting.
         real_uid = self._uid()
+        if real_uid < 0 and not self._workspace_auth_restore_attempted:
+            # The Next.js login cookie is same-origin on Vercel, while Reflex's
+            # event transport runs on the isolated Render origin. Safari can
+            # therefore start this event before LocalStorage has hydrated into
+            # state. Recover the validated same-origin session once, then resume
+            # this same loader with the token explicitly delivered by the event
+            # callback. Anonymous visitors continue normally after the one check.
+            self._workspace_auth_restore_attempted = True
+            yield rx.call_script(
+                """
+                (async () => {
+                  try {
+                    const response = await fetch('/api/auth/reflex-session', {
+                      credentials: 'same-origin',
+                      cache: 'no-store',
+                    });
+                    if (!response.ok) return '';
+                    const data = await response.json();
+                    return typeof data.token === 'string' ? data.token : '';
+                  } catch (_) {
+                    return '';
+                  }
+                })()
+                """,
+                callback=AppState.restore_workspace_auth,
+            )
+            return
         # LocalStorage is synchronized before on_load; is_hydrated becomes true
         # only after it completes, so an anonymous early return skips setup forever.
         self._cached_uid = real_uid
@@ -13312,6 +13340,26 @@ Quality rules:
             view_mode,
             hydrate_nonce,
         )
+
+    @rx.event
+    def restore_workspace_auth(self, raw_token: str):
+        token = str(raw_token or "").strip()
+        try:
+            parsed = json.loads(token)
+            if isinstance(parsed, str):
+                token = parsed.strip()
+        except Exception:
+            pass
+        if token:
+            self.auth_token = token
+            self.app_auth_token = token
+        path = str(getattr(self.router.url, "path", "") or "/s/home")
+        scope = "home"
+        if path.startswith("/s/"):
+            candidate = path.removeprefix("/s/").strip().strip("/")
+            if candidate in SCOPE_ROUTE_MAP:
+                scope = candidate
+        yield AppState.on_load_scope_page(scope)
 
     @rx.event(background=True)
     async def post_render_hydrate_scope(
