@@ -86,6 +86,61 @@ test('Track D UI visibly completes the adaptive mastery loop', () => {
   assert.match(source, /setLastAdaptiveFeedback\(result\.feedback\)/);
 });
 
+test('Track D restores cookie sessions and exposes responsive sidebar controls', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/track-d/TrackDDemo.tsx'), 'utf8');
+  assert.match(source, /\/api\/auth\/session/);
+  assert.match(source, /credentials: "same-origin"/);
+  assert.match(source, /Collapse sidebar/);
+  assert.match(source, /Open sidebar/);
+  assert.match(source, /mobileSidebarOpen/);
+  assert.match(source, /session\.user\?\.username/);
+  assert.doesNotMatch(source, /setUsername\("Visitor"\)/);
+});
+
+test('auth session endpoint accepts the same-site cookie without returning its token', async () => {
+  const { GET } = load('app/api/auth/session/route.ts', {
+    mocks: {
+      '@/lib/auth': {
+        AUTH_TOKEN_LOCAL_STORAGE_KEY: '_auth_token',
+        getSessionUser: async token => token === 'cookie-session' ? { id: 4, username: 'anushka' } : null,
+      },
+    },
+  });
+  const response = await GET({
+    headers: new Headers(),
+    cookies: { get: name => name === '_auth_token' ? { value: 'cookie-session' } : undefined },
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.authenticated, true);
+  assert.equal(body.user.username, 'anushka');
+  assert.equal('token' in body, false);
+});
+
+test('Track D proxy bridges a valid session cookie to the backend auth header', async () => {
+  let forwarded = '';
+  const { proxy } = load('proxy.ts', { globals: {
+    fetch: async (_url, init) => {
+      forwarded = init.headers.get('x-auth-token') || '';
+      return Response.json({ sources: [] });
+    },
+  } });
+  const req = request('/api/track-d/sources');
+  req.cookies = {
+    get: name => name === '_auth_token' ? { value: 'cookie-session' } : undefined,
+    toString: () => '_auth_token=cookie-session',
+  };
+  const response = await proxy(req);
+  assert.equal(response.status, 200);
+  assert.equal(forwarded, 'cookie-session');
+});
+
+test('guest Visitor placeholder is replaced by the authenticated username during migration', () => {
+  const authSource = fs.readFileSync(path.join(root, 'src/lib/auth.ts'), 'utf8');
+  assert.match(authSource, /guestMemory\.name\.trim\(\)\.toLowerCase\(\) === "visitor"/);
+  assert.match(authSource, /name = \$\{migratedName\}/);
+});
+
 test('database client disables TLS only for explicit or inferred localhost development', () => {
   const source = fs.readFileSync(path.join(root, 'src/lib/db.ts'), 'utf8');
   assert.match(source, /DATABASE_SSL_MODE/);

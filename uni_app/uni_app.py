@@ -6044,6 +6044,7 @@ class AppState(reflex_local_auth.LocalAuthState):
 
     other_degree_text: str = ""  # Stores free-text when user selects Custom in onboarding
     show_free_sidebar: bool = True  # Desktop sidebar toggle for /free page
+    show_workspace_sidebar: bool = True  # Desktop sidebar toggle for home workspace
 
     _cached_uid: int = -1
 
@@ -6600,6 +6601,11 @@ class AppState(reflex_local_auth.LocalAuthState):
     @rx.var
     def inferred_name(self) -> str:
         explicit_name = _normalize_person_name(self.name)
+        # The anonymous demo profile uses "Visitor". If that placeholder was
+        # migrated during sign-in, prefer the authenticated account name in UI
+        # while preserving all of the guest's real study data.
+        if explicit_name.lower() == "visitor" and self.is_authenticated_now:
+            explicit_name = ""
         if explicit_name:
             return explicit_name
         recent_messages = [
@@ -12809,6 +12815,16 @@ Quality rules:
 
     @rx.event
     def close_semester_sidebar(self):
+        self.show_semester_sidebar = False
+        self.show_mobile_chat_actions = False
+
+    @rx.event
+    def toggle_workspace_sidebar(self):
+        self.show_workspace_sidebar = not self.show_workspace_sidebar
+
+    @rx.event
+    def close_workspace_sidebar(self):
+        self.show_workspace_sidebar = False
         self.show_semester_sidebar = False
         self.show_mobile_chat_actions = False
 
@@ -25264,14 +25280,20 @@ def home_page():
         rx.flex(
             # Desktop sidebar (hidden on mobile)
             rx.box(
-                workspace_sidebar_content(),
-                width="270px",
+                rx.cond(
+                    AppState.show_workspace_sidebar,
+                    workspace_sidebar_content(show_close_button=True),
+                    workspace_nav_rail(),
+                ),
+                width=rx.cond(AppState.show_workspace_sidebar, "270px", "52px"),
                 flex_shrink="0",
                 height="100%",
                 border_right="1px solid rgba(255,255,255,0.04)",
                 background="rgba(255,255,255,0.01)",
-                padding="1.2em 1em",
+                padding=rx.cond(AppState.show_workspace_sidebar, "1.2em 1em", "0"),
                 display=rx.breakpoints(initial="none", md="block"),
+                transition="width 0.2s ease, padding 0.2s ease",
+                overflow="hidden",
             ),
             rx.box(
                 chat_panel(),
@@ -25869,7 +25891,7 @@ def workspace_sidebar_content(show_close_button: bool = False) -> rx.Component:
                 app_tooltip(
                     rx.icon_button(
                         rx.icon(tag="panel_left", size=18),
-                        on_click=AppState.close_semester_sidebar,
+                        on_click=AppState.close_workspace_sidebar,
                         variant="ghost",
                         size="2",
                         custom_attrs={"aria-label": "Close sidebar", "title": "Close sidebar"},
@@ -27023,6 +27045,47 @@ def nav_rail() -> rx.Component:
         padding_y="12px",
         spacing="1",
         border_right="1px solid rgba(255,255,255,0.06)",
+        background="#0a0a0c",
+        display=rx.breakpoints(initial="none", md="flex"),
+    )
+
+
+def workspace_nav_rail() -> rx.Component:
+    """Compact desktop navigation shown when the home sidebar is collapsed."""
+    return rx.vstack(
+        _nav_rail_btn("panel_left", AppState.toggle_workspace_sidebar, "Open sidebar"),
+        _nav_rail_btn("square_pen", AppState.new_chat, "New chat"),
+        _nav_rail_btn("search", AppState.toggle_global_search, "Search chats"),
+        _nav_rail_btn("notebook", AppState.toggle_notes_panel, "Notes"),
+        _nav_rail_btn("list_checks", rx.redirect("/tracker"), "Tracker"),
+        _nav_rail_btn("youtube", rx.redirect("/learn"), "Learn from video"),
+        rx.spacer(),
+        _nav_rail_btn("settings", rx.redirect("/settings"), "Settings"),
+        rx.box(
+            rx.text(
+                AppState.username_initial,
+                font_size="0.7rem",
+                font_weight="700",
+                color="rgba(220,225,232,0.86)",
+            ),
+            width="30px",
+            height="30px",
+            border_radius="10px",
+            background="rgba(52,211,153,0.10)",
+            border="1px solid rgba(52,211,153,0.18)",
+            display="flex",
+            align_items="center",
+            justify_content="center",
+            margin_bottom="4px",
+            cursor="pointer",
+            on_click=rx.redirect("/settings"),
+        ),
+        align="center",
+        width="52px",
+        height="100%",
+        flex_shrink="0",
+        padding_y="12px",
+        spacing="1",
         background="#0a0a0c",
         display=rx.breakpoints(initial="none", md="flex"),
     )

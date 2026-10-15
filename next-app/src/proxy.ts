@@ -138,6 +138,13 @@ export async function proxy(req: NextRequest) {
   if (cookieHeader) {
     headers.set("cookie", cookieHeader);
   }
+  // Track D normally sends the session in X-Auth-Token. Safari Private can
+  // retain the same-site session cookie while localStorage is unavailable or
+  // delayed, so bridge that cookie server-side without exposing it to UI code.
+  if (pathname.startsWith("/api/track-d/") && !headers.has("x-auth-token")) {
+    const sessionCookie = req.cookies.get("_auth_token")?.value?.trim();
+    if (sessionCookie) headers.set("x-auth-token", sessionCookie);
+  }
 
   let upstreamRes: Response;
   try {

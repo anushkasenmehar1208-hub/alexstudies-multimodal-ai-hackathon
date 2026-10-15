@@ -16,6 +16,11 @@ export interface LocalUser {
   enabled: boolean;
 }
 
+export interface SessionUser {
+  id: number;
+  username: string;
+}
+
 export async function findUserByUsername(
   username: string
 ): Promise<LocalUser | null> {
@@ -99,6 +104,21 @@ export async function getSessionUserId(
   return rows[0]?.user_id ?? null;
 }
 
+export async function getSessionUser(
+  sessionId: string
+): Promise<SessionUser | null> {
+  const rows = await sql<SessionUser[]>`
+    SELECT u.id, u.username
+    FROM localauthsession AS s
+    JOIN localuser AS u ON u.id = s.user_id
+    WHERE s.session_id = ${sessionId}
+      AND s.expiration > NOW()
+      AND u.enabled = true
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
 function guestUidFromToken(guestToken: string): number | null {
   const raw = guestToken.trim();
   let cleaned = raw;
@@ -146,6 +166,14 @@ export async function migrateGuestMemoryToUser(
     const guestMemory = guestRows[0];
     if (!guestMemory) return;
 
+    const accountRows = await tx<{ username: string }[]>`
+      SELECT username FROM localuser WHERE id = ${userId} LIMIT 1
+    `;
+    const migratedName =
+      guestMemory.name.trim().toLowerCase() === "visitor"
+        ? (accountRows[0]?.username ?? guestMemory.name)
+        : guestMemory.name;
+
     const realRows = await tx<{ user_id: number; is_started: boolean }[]>`
       SELECT user_id, is_started
       FROM usermemory
@@ -157,7 +185,8 @@ export async function migrateGuestMemoryToUser(
     if (!realMemory) {
       await tx`
         UPDATE usermemory
-        SET user_id = ${userId}
+        SET user_id = ${userId},
+            name = ${migratedName}
         WHERE user_id = ${guestUid}
       `;
     } else {
@@ -165,7 +194,7 @@ export async function migrateGuestMemoryToUser(
         await tx`
           UPDATE usermemory
           SET step = ${guestMemory.step},
-              name = ${guestMemory.name},
+              name = ${migratedName},
               degree = ${guestMemory.degree},
               pathway = ${guestMemory.pathway},
               active_subject = ${guestMemory.active_subject},
