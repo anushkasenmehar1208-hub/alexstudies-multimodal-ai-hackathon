@@ -6,7 +6,7 @@ from reflex import constants
 from reflex.plugins.sitemap import SitemapPlugin
 
 
-PUBLIC_SITE_URL = "https://alexstudies.com"
+PUBLIC_SITE_URL = os.getenv("APP_BASE_URL", "https://alexstudies-track-d-hackathon.vercel.app")
 PUBLIC_SITEMAP_PATHS = (
     "/",
     "/select",
@@ -41,15 +41,14 @@ def _resolve_public_url() -> str:
 
 def _resolve_api_url() -> str:
     # In production with Next.js proxy (Vercel → Render), the browser connects to
-    # the frontend domain (alexstudies.com) for both WebSocket (/event) and API calls.
+    # the frontend domain for both WebSocket (/event) and API calls.
     # The Next.js middleware proxies these to the Reflex backend.
     # If REFLEX_API_URL is explicitly set, use it (for direct backend access).
-    # Otherwise, default to the public frontend URL so the compiled frontend
-    # connects to the correct origin.
+    # Otherwise, default to the isolated hackathon backend URL.
     return (
         os.getenv("REFLEX_API_URL")
         or os.getenv("API_URL")
-        or "https://backend.alexstudies.com"
+        or "https://alexstudies-track-d-api.onrender.com"
         or "http://localhost:8000"
     ).rstrip("/")
 

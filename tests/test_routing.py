@@ -61,6 +61,55 @@ class RoutingTests(unittest.TestCase):
             "http://localhost:3000/auth/google/callback",
         )
 
+    def test_sanitize_return_to_allows_same_origin_paths(self) -> None:
+        self.assertEqual(app_module._sanitize_return_to("/track-d"), "/track-d")
+        self.assertEqual(
+            app_module._sanitize_return_to("/s/y1s1?chat=42"),
+            "/s/y1s1?chat=42",
+        )
+
+    def test_sanitize_return_to_rejects_open_redirects(self) -> None:
+        for hostile in (
+            "https://evil.example.com/track-d",
+            "//evil.example.com",
+            "/\\evil.example.com",
+            "javascript:alert(1)",
+            "/track-d\"onload=alert(1)",
+            "",
+            None,
+        ):
+            self.assertEqual(app_module._sanitize_return_to(hostile), "", hostile)
+
+    def test_google_start_persists_sanitized_return_to_cookie(self) -> None:
+        with mock.patch.object(app_module, "GOOGLE_OAUTH_ENABLED", True):
+            request = make_request("/auth/google/start", "127.0.0.1:8124")
+            request.scope["query_string"] = b"returnTo=/track-d"
+            response = asyncio.run(app_module.google_start(request))
+        cookies = response.headers.getlist("set-cookie")
+        self.assertTrue(
+            any(
+                cookie.startswith(
+                    f'{app_module.GOOGLE_RETURN_TO_COOKIE_NAME}="/track-d"'
+                )
+                for cookie in cookies
+            ),
+            cookies,
+        )
+
+    def test_google_start_drops_hostile_return_to(self) -> None:
+        with mock.patch.object(app_module, "GOOGLE_OAUTH_ENABLED", True):
+            request = make_request("/auth/google/start", "127.0.0.1:8124")
+            request.scope["query_string"] = b"returnTo=https://evil.example.com"
+            response = asyncio.run(app_module.google_start(request))
+        cookies = response.headers.getlist("set-cookie")
+        self.assertFalse(
+            any(
+                cookie.startswith(app_module.GOOGLE_RETURN_TO_COOKIE_NAME)
+                for cookie in cookies
+            ),
+            cookies,
+        )
+
     def test_legacy_auth_complete_redirect_targets_static_page(self) -> None:
         request = make_request(
             "/auth/complete/abc123",

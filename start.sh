@@ -22,4 +22,15 @@ ls -la /app/.web/build/client/ 2>/dev/null || echo "WARNING: frontend build miss
 export __REFLEX_SKIP_COMPILE=true
 export REFLEX_WEB_WORKDIR=/app/.web
 
+# Ensure pre-compiled frontend connects to this deployment's backend, not the old production domain
+if [ -d "/app/.web/build/client/assets" ]; then
+    TARGET_API="${REFLEX_API_URL:-https://alexstudies-track-d-api.onrender.com}"
+    TARGET_HOST="${TARGET_API#https://}"
+    TARGET_HOST="${TARGET_HOST#http://}"
+    echo "Ensuring frontend connects to backend: $TARGET_API"
+    sed -i "s|https://backend.alexstudies.com|${TARGET_API}|g" /app/.web/build/client/assets/*.js 2>/dev/null || true
+    sed -i "s|wss://backend.alexstudies.com|wss://${TARGET_HOST}|g" /app/.web/build/client/assets/*.js 2>/dev/null || true
+    sed -i "s|ws://backend.alexstudies.com|ws://${TARGET_HOST}|g" /app/.web/build/client/assets/*.js 2>/dev/null || true
+fi
+
 exec python3 production_server.py

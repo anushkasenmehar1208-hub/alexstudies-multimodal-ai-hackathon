@@ -3,18 +3,22 @@
 interface GoogleButtonProps {
   label?: string;
   onClick?: () => void;
+  returnTo?: string;
 }
 
 export function GoogleButton({
   label = "Continue with Google",
   onClick,
+  returnTo,
 }: GoogleButtonProps) {
   const handleClick = () => {
     if (onClick) {
       onClick();
     } else {
-      // Redirect to the existing Reflex Google OAuth endpoint
-      window.location.href = "/auth/google/start";
+      const destination = returnTo
+        ? `/auth/google/start?returnTo=${encodeURIComponent(returnTo)}`
+        : "/auth/google/start";
+      window.location.href = destination;
     }
   };
 

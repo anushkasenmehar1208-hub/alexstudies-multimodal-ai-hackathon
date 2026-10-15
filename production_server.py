@@ -48,12 +48,33 @@ import uvicorn
 from uni_app.uni_app import app
 
 
+def patch_frontend_assets():
+    target_api = os.environ.get("REFLEX_API_URL", "https://alexstudies-track-d-api.onrender.com").rstrip("/")
+    target_host = target_api.removeprefix("https://").removeprefix("http://")
+    assets_dir = WEB_DIR / "build" / "client" / "assets"
+    if not assets_dir.exists():
+        return
+    for js_file in assets_dir.glob("*.js"):
+        try:
+            content = js_file.read_text(encoding="utf-8")
+            if "backend.alexstudies.com" in content:
+                content = content.replace("https://backend.alexstudies.com", target_api)
+                content = content.replace("wss://backend.alexstudies.com", f"wss://{target_host}")
+                content = content.replace("ws://backend.alexstudies.com", f"ws://{target_host}")
+                js_file.write_text(content, encoding="utf-8")
+        except Exception as e:
+            print(f"Warning: could not patch {js_file}: {e}")
+
+
 def main():
     port = int(os.environ.get("PORT", "8080"))
 
     print(f"Starting production server on 0.0.0.0:{port}")
     print(f"Frontend: {WEB_DIR / 'build/client'}")
     print(f"Database: {'configured' if os.environ.get('DATABASE_URL') else 'NOT SET'}")
+
+    patch_frontend_assets()
+
     print(f"Starting Uvicorn...")
 
     # Get the full ASGI app (calls app.__call__ which handles frontend mounting, middleware, etc.)

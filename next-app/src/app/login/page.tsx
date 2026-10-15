@@ -7,12 +7,32 @@ import { AuthCard } from "@/components/auth/AuthCard";
 import { GoogleButton } from "@/components/auth/GoogleButton";
 import { Eye, EyeOff } from "lucide-react";
 
+function sanitizeReturnTo(param: string | null | undefined): string {
+  const target = String(param ?? "").trim();
+  if (!target) return "";
+  if (/^\/[a-zA-Z0-9_\-./?&=%#]*$/.test(target) && !target.startsWith("//") && !target.startsWith("/\\")) {
+    return target;
+  }
+  return "";
+}
+
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  // Lazy initializer reads the query param once on mount (client-only) so we
+  // never call setState inside an effect. Guards against open redirects.
+  const [returnTo] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return sanitizeReturnTo(params.get("returnTo") || params.get("next"));
+    } catch {
+      return "";
+    }
+  });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,10 +54,12 @@ export default function LoginPage() {
         try {
           localStorage.setItem(data.tokenKey, JSON.stringify(data.token));
         } catch {}
-        // Reflex uses scope-based routing. The authenticated landing route
-        // is /s/home (home scope) which handles onboarding for new users
-        // and routes already-onboarded users to their semester.
-        window.location.href = "/s/home";
+        const destination = sanitizeReturnTo(
+          new URLSearchParams(window.location.search).get("returnTo") ||
+          new URLSearchParams(window.location.search).get("next") ||
+          returnTo
+        ) || "/s/home";
+        window.location.href = destination;
       } else {
         setError(data.error || "Invalid username or password.");
       }
@@ -55,7 +77,7 @@ export default function LoginPage() {
         <>
           Don&apos;t have an account?{" "}
           <Link
-            href="/register"
+            href={returnTo ? `/register?returnTo=${encodeURIComponent(returnTo)}` : "/register"}
             className="text-white hover:text-white/80 font-medium underline-offset-4 hover:underline"
           >
             Register
@@ -64,7 +86,7 @@ export default function LoginPage() {
       }
     >
       <div className="space-y-4">
-        <GoogleButton />
+        <GoogleButton returnTo={returnTo} />
 
         <div className="flex items-center py-2 text-white/40 text-[0.8rem] font-medium">
           <div className="h-px flex-1 bg-white/[0.08]" />

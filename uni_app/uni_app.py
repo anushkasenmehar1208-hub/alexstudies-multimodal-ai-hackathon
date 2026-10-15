@@ -1987,7 +1987,7 @@ def _extract_person_name(*texts: str) -> str:
         # Treat short alphabetic phrases as explicit names, including multi-word names like "Neo Alexs".
         if (
             normalized
-            and normalized.lower() not in {"student", "user"}
+            and normalized.lower() not in {"student", "user", "visitor", "guest"}
             and re.fullmatch(r"[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2}", raw)
         ):
             return normalized
@@ -1996,7 +1996,7 @@ def _extract_person_name(*texts: str) -> str:
             if not match:
                 continue
             candidate = _normalize_person_name(match.group(1))
-            if candidate and candidate.lower() not in {"student", "user"}:
+            if candidate and candidate.lower() not in {"student", "user", "visitor", "guest"}:
                 return candidate
     return ""
 
@@ -3530,6 +3530,7 @@ GOOGLE_STRICT_STATE     = os.getenv("GOOGLE_STRICT_STATE", "false").lower() == "
 _google_state_serializer = URLSafeTimedSerializer(SESSION_SECRET, salt="google-oauth-state")
 GOOGLE_STATE_COOKIE_NAME = "alex_google_oauth_nonce"
 GOOGLE_COMPLETE_COOKIE_NAME = "alex_google_complete_token"
+GOOGLE_RETURN_TO_COOKIE_NAME = "alex_auth_return_to"
 # CSRF for login/register/reset must be visible to every app worker; SessionStorage only syncs
 # with the worker that created the page, so multi-replica deploys (e.g. Railway) see false
 # "Session expired" on submit. Cookies are sent on every request to any replica.
@@ -3721,6 +3722,21 @@ def _google_username_from_sub(sub: str) -> str:
     if not cleaned:
         cleaned = secrets.token_hex(8)
     return f"google_{cleaned}"[:255]
+
+
+def _sanitize_return_to(value: str | None) -> str:
+    """Allow only same-origin, absolute-path redirects (e.g. /track-d).
+
+    Mirrors the client-side guard in the Next.js login/register pages so an
+    attacker-supplied ?returnTo= can never bounce a fresh session to an
+    external or protocol-relative (//host) destination.
+    """
+    target = (value or "").strip()
+    if not target.startswith("/") or target.startswith("//") or target.startswith("/\\"):
+        return ""
+    if re.match(r"^/[a-zA-Z0-9_\-./?&=%#]*$", target):
+        return target
+    return ""
 
 
 def _google_make_state() -> str:
@@ -6599,6 +6615,16 @@ class AppState(reflex_local_auth.LocalAuthState):
     @rx.var
     def account_display_name(self) -> str:
         username = getattr(self.authenticated_user, "username", "") or ""
+        if not username and self._cached_uid >= 0:
+            try:
+                with rx.session() as session:
+                    account = session.exec(
+                        select(LocalUser).where(LocalUser.id == self._cached_uid)
+                    ).one_or_none()
+                    if account and account.username:
+                        username = account.username
+            except Exception:
+                pass
         if username.lower().startswith("google_"):
             return ""
         return _normalize_person_name(username)
@@ -6606,24 +6632,30 @@ class AppState(reflex_local_auth.LocalAuthState):
     @rx.var
     def inferred_name(self) -> str:
         explicit_name = _normalize_person_name(self.name)
-        # The anonymous demo profile uses "Visitor". If that placeholder was
-        # migrated during sign-in, prefer the authenticated account name in UI
-        # while preserving all of the guest's real study data.
-        if explicit_name.lower() == "visitor" and self.is_authenticated_now:
-            explicit_name = ""
+        # If the user is authenticated, prefer their real account username over the
+        # anonymous demo placeholder "Visitor", "Guest", etc.
+        if self.is_authenticated_now:
+            if explicit_name.lower() in {"visitor", "guest", "student", "user"}:
+                explicit_name = ""
+            if not explicit_name and self.account_display_name:
+                return self.account_display_name
         if explicit_name:
             return explicit_name
         recent_messages = [
             str(msg.get("content", ""))
             for msg in list(self.chat_history or [])[-6:]
         ]
-        return _extract_person_name(
-            self.name,
+        extracted = _extract_person_name(
             self.account_display_name,
             self.memory_summary,
             self.adaptive_profile,
             *recent_messages,
         )
+        if extracted and extracted.lower() not in {"visitor", "guest", "student", "user"}:
+            return extracted
+        if self.account_display_name:
+            return self.account_display_name
+        return "Visitor" if not self.is_authenticated_now else "Student"
 
     @rx.var
     def display_name(self) -> str:
@@ -7179,8 +7211,8 @@ class AppState(reflex_local_auth.LocalAuthState):
                 self.other_degree_text = ""
             if self.pathway:
                 self.pathway = canonical_pathway_label(self.degree, self.pathway)
-            if not (self.name or "").strip():
-                if account is not None:
+            if not (self.name or "").strip() or (self.name or "").strip().lower() in {"visitor", "guest", "student", "user"}:
+                if account is not None and (account.username or "").strip():
                     self.name = _normalize_person_name(account.username)
 
             self._sync_pathway_options()
@@ -7433,7 +7465,16 @@ class AppState(reflex_local_auth.LocalAuthState):
         # entirely. The /app or /s/* destination then resolves auth via
         # its own _uid() check after hydration is fully complete.
         yield rx.call_script(
-            "(function(){var t=null;var c=false;try{t=localStorage.getItem('_auth_token');}catch(e){}try{c=document.cookie.indexOf('_auth_token=')!==-1;}catch(e){}window.location.replace((t||c)?'/app':'/login');})();"
+            "(function(){"
+            "var t=null;var c=false;var r='';"
+            "try{t=localStorage.getItem('_auth_token');}catch(e){}"
+            "try{c=document.cookie.indexOf('_auth_token=')!==-1;}catch(e){}"
+            "try{r=sessionStorage.getItem('alex_auth_return_to')||'';sessionStorage.removeItem('alex_auth_return_to');}catch(e){}"
+            # Only honor same-origin absolute paths — reject protocol-relative
+            # (//host) or backslash tricks so this can't become an open redirect.
+            "if(r&&r.charAt(0)==='/'&&r.charAt(1)!=='/'&&r.charAt(1)!=='\\\\'){window.location.replace(r);return;}"
+            "window.location.replace((t||c)?'/app':'/login');"
+            "})();"
         )
         return
 
@@ -25829,6 +25870,47 @@ def alex_workspace_button() -> rx.Component:
     )
 
 
+def track_d_sidebar_button() -> rx.Component:
+    return rx.link(
+        rx.hstack(
+            rx.icon(tag="graduation_cap", size=16, color="#A7F3D0", flex_shrink="0"),
+            rx.vstack(
+                rx.text(
+                    "Track D Learning Lab",
+                    color="white",
+                    font_size=rx.breakpoints(initial="0.95rem", md="0.86rem"),
+                    font_weight="600",
+                    letter_spacing="-0.01em",
+                ),
+                rx.text(
+                    "Grounded tutoring & adaptive practice",
+                    color="rgba(226,232,240,0.55)",
+                    font_size=rx.breakpoints(initial="0.75rem", md="0.7rem"),
+                    font_weight="400",
+                    text_align="left",
+                    line_height="1.3",
+                ),
+                spacing="0",
+                align_items="flex-start",
+            ),
+            spacing="2",
+            align="center",
+            width="100%",
+            padding=rx.breakpoints(initial="10px 12px", md="0.7em 0.8em"),
+            border_radius="12px",
+            border="1px solid rgba(52,211,153,0.18)",
+            background="rgba(52,211,153,0.05)",
+            _hover={
+                "background": "rgba(52,211,153,0.10)",
+                "border": "1px solid rgba(52,211,153,0.30)",
+            },
+        ),
+        href="/track-d",
+        text_decoration="none",
+        width="100%",
+    )
+
+
 def mobile_chat_actions_sheet() -> rx.Component:
     return rx.cond(
         AppState.show_mobile_chat_actions,
@@ -25986,6 +26068,7 @@ def workspace_sidebar_content(show_close_button: bool = False) -> rx.Component:
         *header_blocks,
         # ── Alex AI workspace button ──
         alex_workspace_button(),
+        track_d_sidebar_button(),
         rx.box(height="1px", width="100%", background="rgba(255,255,255,0.06)"),
         # ── Semester (compact dropdown — frees space for chat list) ──
         rx.text(
@@ -27064,6 +27147,7 @@ def nav_rail() -> rx.Component:
         _nav_rail_btn("notebook", AppState.toggle_notes_panel, "Notes"),
         _nav_rail_btn("list_checks", [AppState.close_semester_sidebar, rx.redirect("/tracker")], "Tracker"),
         _nav_rail_btn("youtube", [AppState.close_semester_sidebar, rx.redirect("/learn")], "Learn from video"),
+        _nav_rail_btn("graduation_cap", [AppState.close_semester_sidebar, rx.redirect("/track-d")], "Track D Learning Lab"),
         _locked_nav_rail_btn("video", AppState.show_video_generator_coming_soon, "Generate teaching videos - coming soon"),
         rx.spacer(),
         # ── Bottom group ──
@@ -27111,6 +27195,7 @@ def workspace_nav_rail() -> rx.Component:
         _nav_rail_btn("notebook", AppState.toggle_notes_panel, "Notes"),
         _nav_rail_btn("list_checks", rx.redirect("/tracker"), "Tracker"),
         _nav_rail_btn("youtube", rx.redirect("/learn"), "Learn from video"),
+        _nav_rail_btn("graduation_cap", rx.redirect("/track-d"), "Track D Learning Lab"),
         rx.spacer(),
         _nav_rail_btn("settings", rx.redirect("/settings"), "Settings"),
         rx.box(
@@ -37749,6 +37834,10 @@ async def google_start(request: Request):
     if not GOOGLE_OAUTH_ENABLED:
         return RedirectResponse(url=f"{_frontend_base_url(request)}{auth_routes.LOGIN_ROUTE}", status_code=302)
     oauth_nonce = secrets.token_urlsafe(24)
+    # Preserve where the user started sign-in (e.g. /track-d) across the OAuth
+    # round-trip; the callback hands it to the post-login bridge. Sanitized to a
+    # same-origin path so it can never become an open redirect.
+    return_to = _sanitize_return_to(request.query_params.get("returnTo"))
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": _google_callback_url(request),
@@ -37766,12 +37855,24 @@ async def google_start(request: Request):
         secure=_request_is_https(request),
         samesite="lax",
     )
+    if return_to:
+        response.set_cookie(
+            GOOGLE_RETURN_TO_COOKIE_NAME,
+            return_to,
+            max_age=GOOGLE_STATE_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=_request_is_https(request),
+            samesite="lax",
+        )
     return response
 
 
 async def google_callback(request: Request):
     if not GOOGLE_OAUTH_ENABLED:
         return RedirectResponse(url=f"{_frontend_base_url(request)}{auth_routes.LOGIN_ROUTE}", status_code=302)
+    # Read the pre-login destination persisted by google_start. It is cleared
+    # on every response below so it can't leak into a later session.
+    return_to = _sanitize_return_to(request.cookies.get(GOOGLE_RETURN_TO_COOKIE_NAME))
     try:
         state = str(request.query_params.get("state", "") or "")
         state_payload = _google_parse_state(state)
@@ -37779,12 +37880,14 @@ async def google_callback(request: Request):
         if state_payload is None or not expected_nonce or state_payload.get("n") != expected_nonce:
             response = RedirectResponse(url=f"{_frontend_base_url(request)}{auth_routes.LOGIN_ROUTE}", status_code=302)
             response.delete_cookie(GOOGLE_STATE_COOKIE_NAME)
+            response.delete_cookie(GOOGLE_RETURN_TO_COOKIE_NAME)
             return response
 
         if request.query_params.get("error"):
             print(f"[Google CB] error param: {request.query_params.get('error')}")
             response = RedirectResponse(url=f"{_frontend_base_url(request)}{auth_routes.LOGIN_ROUTE}", status_code=302)
             response.delete_cookie(GOOGLE_STATE_COOKIE_NAME)
+            response.delete_cookie(GOOGLE_RETURN_TO_COOKIE_NAME)
             return response
 
         code = str(request.query_params.get("code", "") or "")
@@ -37792,6 +37895,7 @@ async def google_callback(request: Request):
             print("[Google CB] no code")
             response = RedirectResponse(url=f"{_frontend_base_url(request)}{auth_routes.LOGIN_ROUTE}", status_code=302)
             response.delete_cookie(GOOGLE_STATE_COOKIE_NAME)
+            response.delete_cookie(GOOGLE_RETURN_TO_COOKIE_NAME)
             return response
 
         async with httpx.AsyncClient(timeout=20.0) as client_http:
@@ -37887,6 +37991,9 @@ async def google_callback(request: Request):
 	          // an empty string, treating the user as a guest.
 	          localStorage.setItem({json.dumps(AUTH_TOKEN_LOCAL_STORAGE_KEY)}, JSON.stringify({json.dumps(auth_token)}));
 	          localStorage.setItem('alex_ga_auth_method', 'google');
+	          if ({json.dumps(return_to)}) {{
+	            window.sessionStorage.setItem('alex_auth_return_to', {json.dumps(return_to)});
+	          }}
 	        }} catch (e) {{}}
 	        window.location.replace("/auth/post-login");
 	      }})();
@@ -37905,6 +38012,7 @@ async def google_callback(request: Request):
         )
         response.delete_cookie(GOOGLE_STATE_COOKIE_NAME)
         response.delete_cookie(GOOGLE_COMPLETE_COOKIE_NAME)
+        response.delete_cookie(GOOGLE_RETURN_TO_COOKIE_NAME)
         response.set_cookie(
             AUTH_TOKEN_LOCAL_STORAGE_KEY,
             auth_token,

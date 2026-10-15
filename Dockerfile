@@ -32,6 +32,11 @@ RUN python -m pip install -r requirements.txt \
 
 COPY . .
 
+ARG REFLEX_API_URL=https://alexstudies-track-d-api.onrender.com
+ARG APP_BASE_URL=https://alexstudies-track-d-hackathon.vercel.app
+ENV REFLEX_API_URL=${REFLEX_API_URL}
+ENV APP_BASE_URL=${APP_BASE_URL}
+
 RUN mkdir -p "$REFLEX_DIR" /app/.data \
     && reflex export --frontend-only --no-zip --env prod \
     && mkdir -p .web/backend \

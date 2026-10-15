@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const REFLEX_BACKEND_URL =
-  process.env.REFLEX_BACKEND_URL || "https://backend.alexstudies.com";
+  process.env.REFLEX_BACKEND_URL || "https://alexstudies-track-d-api.onrender.com";
 
 // Paths owned by Next.js — everything else proxies to Reflex.
 const NEXT_PATHS = [

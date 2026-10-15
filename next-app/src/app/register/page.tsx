@@ -7,6 +7,15 @@ import { AuthCard } from "@/components/auth/AuthCard";
 import { GoogleButton } from "@/components/auth/GoogleButton";
 import { Eye, EyeOff, Check } from "lucide-react";
 
+function sanitizeReturnTo(param: string | null | undefined): string {
+  const target = String(param ?? "").trim();
+  if (!target) return "";
+  if (/^\/[a-zA-Z0-9_\-./?&=%#]*$/.test(target) && !target.startsWith("//") && !target.startsWith("/\\")) {
+    return target;
+  }
+  return "";
+}
+
 export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -14,6 +23,17 @@ export default function RegisterPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Lazy initializer reads the query param once on mount (client-only) so we
+  // never call setState inside an effect. Guards against open redirects.
+  const [returnTo] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return sanitizeReturnTo(params.get("returnTo") || params.get("next"));
+    } catch {
+      return "";
+    }
+  });
 
   const passwordChecks = [
     { label: "At least 8 characters", valid: password.length >= 8 },
@@ -46,9 +66,12 @@ export default function RegisterPage() {
         try {
           localStorage.setItem(data.tokenKey, JSON.stringify(data.token));
         } catch {}
-        // Skip Next.js /onboarding — Reflex's /s/home handles the
-        // country/degree/semester picker and binds it to the chat.
-        window.location.href = "/s/home";
+        const destination = sanitizeReturnTo(
+          new URLSearchParams(window.location.search).get("returnTo") ||
+          new URLSearchParams(window.location.search).get("next") ||
+          returnTo
+        ) || "/s/home";
+        window.location.href = destination;
       } else {
         setError(data.error || "Couldn't create your account. Try again.");
       }
@@ -66,7 +89,7 @@ export default function RegisterPage() {
         <>
           Already have an account?{" "}
           <Link
-            href="/login"
+            href={returnTo ? `/login?returnTo=${encodeURIComponent(returnTo)}` : "/login"}
             className="text-white hover:text-white/80 font-medium underline-offset-4 hover:underline"
           >
             Sign in
@@ -75,7 +98,7 @@ export default function RegisterPage() {
       }
     >
       <div className="space-y-4">
-        <GoogleButton label="Continue with Google" />
+        <GoogleButton label="Continue with Google" returnTo={returnTo} />
 
         <div className="flex items-center py-2 text-white/40 text-[0.8rem] font-medium">
           <div className="h-px flex-1 bg-white/[0.08]" />
