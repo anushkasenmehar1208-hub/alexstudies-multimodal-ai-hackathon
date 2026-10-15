@@ -3477,6 +3477,11 @@ def _append_training_example(uid: int, scope: str, user_msg: str, assistant_msg:
 
 APP_BASE_URL            = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
 API_BASE_URL            = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+# Track D lives on the Next.js frontend (Vercel), not the Reflex backend, so
+# /track-d must be an absolute URL. A relative href resolves against the current
+# origin — inside the backend-served workspace that origin is the Render API,
+# which 404s /track-d. Build it from the canonical frontend base instead.
+TRACK_D_URL             = f"{APP_BASE_URL}/track-d"
 DODO_PAYMENTS_API_URL   = os.getenv(
     "DODO_PAYMENTS_API_URL",
     "https://live.dodopayments.com/checkouts",
@@ -25905,7 +25910,7 @@ def track_d_sidebar_button() -> rx.Component:
                 "border": "1px solid rgba(52,211,153,0.30)",
             },
         ),
-        href="/track-d",
+        href=TRACK_D_URL,
         text_decoration="none",
         width="100%",
     )
@@ -27147,7 +27152,7 @@ def nav_rail() -> rx.Component:
         _nav_rail_btn("notebook", AppState.toggle_notes_panel, "Notes"),
         _nav_rail_btn("list_checks", [AppState.close_semester_sidebar, rx.redirect("/tracker")], "Tracker"),
         _nav_rail_btn("youtube", [AppState.close_semester_sidebar, rx.redirect("/learn")], "Learn from video"),
-        _nav_rail_btn("graduation_cap", [AppState.close_semester_sidebar, rx.redirect("/track-d")], "Track D Learning Lab"),
+        _nav_rail_btn("graduation_cap", [AppState.close_semester_sidebar, _hard_navigate(TRACK_D_URL)], "Track D Learning Lab"),
         _locked_nav_rail_btn("video", AppState.show_video_generator_coming_soon, "Generate teaching videos - coming soon"),
         rx.spacer(),
         # ── Bottom group ──
@@ -27195,7 +27200,7 @@ def workspace_nav_rail() -> rx.Component:
         _nav_rail_btn("notebook", AppState.toggle_notes_panel, "Notes"),
         _nav_rail_btn("list_checks", rx.redirect("/tracker"), "Tracker"),
         _nav_rail_btn("youtube", rx.redirect("/learn"), "Learn from video"),
-        _nav_rail_btn("graduation_cap", rx.redirect("/track-d"), "Track D Learning Lab"),
+        _nav_rail_btn("graduation_cap", _hard_navigate(TRACK_D_URL), "Track D Learning Lab"),
         rx.spacer(),
         _nav_rail_btn("settings", rx.redirect("/settings"), "Settings"),
         rx.box(
