@@ -97,6 +97,12 @@ test('Track D restores cookie sessions and exposes responsive sidebar controls',
   assert.doesNotMatch(source, /setUsername\("Visitor"\)/);
 });
 
+test('Reflex auth storage has a single owner for deterministic Safari hydration', () => {
+  const source = fs.readFileSync(path.join(root, '..', 'uni_app', 'uni_app.py'), 'utf8');
+  assert.match(source, /class AppState\(reflex_local_auth\.LocalAuthState\):[\s\S]*?app_auth_token: str = ""/);
+  assert.doesNotMatch(source, /app_auth_token: str = rx\.LocalStorage\(name=AUTH_TOKEN_LOCAL_STORAGE_KEY\)/);
+});
+
 test('auth session endpoint accepts the same-site cookie without returning its token', async () => {
   const { GET } = load('app/api/auth/session/route.ts', {
     mocks: {

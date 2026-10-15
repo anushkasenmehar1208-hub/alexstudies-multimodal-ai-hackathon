@@ -5872,7 +5872,11 @@ async def health_check(request):
 # App State
 # ============================
 class AppState(reflex_local_auth.LocalAuthState):
-    app_auth_token: str = rx.LocalStorage(name=AUTH_TOKEN_LOCAL_STORAGE_KEY)
+    # LocalAuthState.auth_token already owns the `_auth_token` localStorage key.
+    # A second LocalStorage field for the same key makes hydration order-dependent,
+    # which can leave Safari rendering an authenticated account as a visitor.
+    # Keep this legacy field as an ordinary server-state mirror instead.
+    app_auth_token: str = ""
     guest_token: str = rx.LocalStorage(name=GUEST_TOKEN_LOCAL_STORAGE_KEY)
     model_mode: str = rx.LocalStorage("auto", name="alex_model_mode")
     manual_model_key: str = rx.LocalStorage(MANUAL_MODEL_DEFAULT_KEY, name="alex_manual_model_key")
